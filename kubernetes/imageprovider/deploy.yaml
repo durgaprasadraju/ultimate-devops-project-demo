@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: imageprovider
-          image: 'ghcr.io/open-telemetry/demo:1.12.0-imageprovider'
+          image: durganadimpalli/image-provider:29633855132
           imagePullPolicy: IfNotPresent
           ports:
             
