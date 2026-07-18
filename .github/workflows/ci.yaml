@@ -60,6 +60,8 @@ jobs:
 
   docker:
     needs: [build, code-quality]
+    permissions:
+      contents: write
     uses: ./.github/workflows/reusable-service-ci.yaml
     with:
       service_name: product-catalog

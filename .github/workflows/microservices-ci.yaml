@@ -1,8 +1,9 @@
 # CI for all other shop microservices (Docker build + GitOps manifest update).
 #
-# Each service gets its own image (like product-catalog). Path filters ensure
-# only the changed service pipeline runs. One Argo CD Application syncs all
-# per-service manifests under kubernetes/.
+# Each service gets its own image (like product-catalog). The `changes` job
+# detects which services were touched and emits a build matrix containing only
+# those services. One Argo CD Application syncs all per-service manifests
+# under kubernetes/.
 
 name: microservices-ci
 
@@ -54,169 +55,86 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.filter.outputs.services }}
+      matrix: ${{ steps.filter.outputs.matrix }}
+      any_changed: ${{ steps.filter.outputs.any_changed }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Detect changed services
+      - name: Detect changed services and build matrix
         id: filter
         run: |
           set -euo pipefail
           python3 <<'PY'
           import json, os, subprocess
-          mapping = [
-            ("ad", "src/ad"),
-            ("cart", "src/cart"),
-            ("checkout", "src/checkout"),
-            ("currency", "src/currency"),
-            ("email", "src/email"),
-            ("frontend", "src/frontend"),
-            ("frontend-proxy", "src/frontend-proxy"),
-            ("fraud-detection", "src/fraud-detection"),
-            ("accounting", "src/accounting"),
-            ("image-provider", "src/image-provider"),
-            ("kafka", "src/kafka"),
-            ("load-generator", "src/load-generator"),
-            ("payment", "src/payment"),
-            ("quote", "src/quote"),
-            ("recommendation", "src/recommendation"),
-            ("shipping", "src/shipping"),
+
+          # service_name, src prefix, docker context, dockerfile, image, deploy manifest, container
+          services = [
+            ("ad",              "src/ad",              "src/ad",              "src/ad/Dockerfile",              "ad",              "kubernetes/ad/deploy.yaml",              "adservice"),
+            ("cart",            "src/cart",            "src/cart/src",        "src/cart/src/Dockerfile",        "cart",            "kubernetes/cart/deploy.yaml",            "cartservice"),
+            ("checkout",        "src/checkout",        "src/checkout",        "src/checkout/Dockerfile",        "checkout",        "kubernetes/checkout/deploy.yaml",        "checkoutservice"),
+            ("currency",        "src/currency",        "src/currency",        "src/currency/Dockerfile",        "currency",        "kubernetes/currency/deploy.yaml",        "currencyservice"),
+            ("email",           "src/email",           "src/email",           "src/email/Dockerfile",           "email",           "kubernetes/email/deploy.yaml",           "emailservice"),
+            ("frontend",        "src/frontend",        "src/frontend",        "src/frontend/Dockerfile",        "frontend",        "kubernetes/frontend/deploy.yaml",        "frontend"),
+            ("frontend-proxy",  "src/frontend-proxy",  "src/frontend-proxy",  "src/frontend-proxy/Dockerfile",  "frontend-proxy",  "kubernetes/frontendproxy/deploy.yaml",   "frontendproxy"),
+            ("fraud-detection", "src/fraud-detection", "src/fraud-detection", "src/fraud-detection/Dockerfile", "fraud-detection", "kubernetes/frauddetection/deploy.yaml",  "frauddetectionservice"),
+            ("accounting",      "src/accounting",      "src/accounting",      "src/accounting/Dockerfile",      "accounting",      "kubernetes/accounting/deploy.yaml",      "accountingservice"),
+            ("image-provider",  "src/image-provider",  "src/image-provider",  "src/image-provider/Dockerfile",  "image-provider",  "kubernetes/imageprovider/deploy.yaml",   "imageprovider"),
+            ("kafka",           "src/kafka",           "src/kafka",           "src/kafka/Dockerfile",           "kafka",           "kubernetes/kafka/deploy.yaml",           "kafka"),
+            ("load-generator",  "src/load-generator",  "src/load-generator",  "src/load-generator/Dockerfile",  "load-generator",  "kubernetes/loadgenerator/deploy.yaml",   "loadgenerator"),
+            ("payment",         "src/payment",         "src/payment",         "src/payment/Dockerfile",         "payment",         "kubernetes/payment/deploy.yaml",         "paymentservice"),
+            ("quote",           "src/quote",           "src/quote",           "src/quote/Dockerfile",           "quote",           "kubernetes/quote/deploy.yaml",           "quoteservice"),
+            ("recommendation",  "src/recommendation",  "src/recommendation",  "src/recommendation/Dockerfile",  "recommendation",  "kubernetes/recommendation/deploy.yaml",  "recommendationservice"),
+            ("shipping",        "src/shipping",        "src/shipping",        "src/shipping/Dockerfile",        "shipping",        "kubernetes/shipping/deploy.yaml",        "shippingservice"),
           ]
+
           event = os.environ.get("GITHUB_EVENT_NAME", "")
           if event == "pull_request":
             base = os.environ["GITHUB_BASE_REF"]
-            subprocess.check_call(["git", "fetch", "origin", base, "--depth=1"])
             diff_range = f"origin/{base}...HEAD"
           else:
-            before = os.environ.get("GITHUB_EVENT_BEFORE") or "HEAD~1"
-            diff_range = f"{before}...HEAD"
+            with open(os.environ["GITHUB_EVENT_PATH"]) as fh:
+              before = json.load(fh).get("before", "")
+            diff_range = f"{before}...HEAD" if before and not before.startswith("0000000") else "HEAD~1...HEAD"
+
           try:
             files = subprocess.check_output(
                 ["git", "diff", "--name-only", diff_range], text=True
             ).splitlines()
           except subprocess.CalledProcessError:
             files = []
-          changed = []
-          for name, prefix in mapping:
-            if any(f.startswith(prefix + "/") or f == prefix for f in files):
-              changed.append(name)
-          # Workflow-only changes: build nothing unless a service path changed
+
+          include = []
+          for name, prefix, context, dockerfile, image, deploy, container in services:
+            if any(f == prefix or f.startswith(prefix + "/") for f in files):
+              include.append({
+                "service_name": name,
+                "src_context": context,
+                "dockerfile": dockerfile,
+                "image_name": image,
+                "k8s_deploy_path": deploy,
+                "container_name": container,
+              })
+
           print("changed files:", files)
-          print("changed services:", changed)
+          print("services to build:", [e["service_name"] for e in include])
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
-              fh.write(f"services={json.dumps(changed)}\n")
+              fh.write(f"matrix={json.dumps({'include': include})}\n")
+              fh.write(f"any_changed={'true' if include else 'false'}\n")
           PY
 
   docker:
     needs: changes
-    # Skip when nothing changed; also filter matrix to changed services only.
-    if: >
-      needs.changes.outputs.services != '[]' &&
-      needs.changes.outputs.services != '' &&
-      contains(fromJSON(needs.changes.outputs.services), matrix.service_name)
+    if: needs.changes.outputs.any_changed == 'true'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       # Serialize pushes so concurrent jobs do not race on git commit/push.
       max-parallel: 1
-      matrix:
-        include:
-          - service_name: ad
-            src_context: src/ad
-            dockerfile: src/ad/Dockerfile
-            image_name: ad
-            k8s_deploy_path: kubernetes/ad/deploy.yaml
-            container_name: adservice
-          - service_name: cart
-            src_context: src/cart/src
-            dockerfile: src/cart/src/Dockerfile
-            image_name: cart
-            k8s_deploy_path: kubernetes/cart/deploy.yaml
-            container_name: cartservice
-          - service_name: checkout
-            src_context: src/checkout
-            dockerfile: src/checkout/Dockerfile
-            image_name: checkout
-            k8s_deploy_path: kubernetes/checkout/deploy.yaml
-            container_name: checkoutservice
-          - service_name: currency
-            src_context: src/currency
-            dockerfile: src/currency/Dockerfile
-            image_name: currency
-            k8s_deploy_path: kubernetes/currency/deploy.yaml
-            container_name: currencyservice
-          - service_name: email
-            src_context: src/email
-            dockerfile: src/email/Dockerfile
-            image_name: email
-            k8s_deploy_path: kubernetes/email/deploy.yaml
-            container_name: emailservice
-          - service_name: frontend
-            src_context: src/frontend
-            dockerfile: src/frontend/Dockerfile
-            image_name: frontend
-            k8s_deploy_path: kubernetes/frontend/deploy.yaml
-            container_name: frontend
-          - service_name: frontend-proxy
-            src_context: src/frontend-proxy
-            dockerfile: src/frontend-proxy/Dockerfile
-            image_name: frontend-proxy
-            k8s_deploy_path: kubernetes/frontendproxy/deploy.yaml
-            container_name: frontendproxy
-          - service_name: fraud-detection
-            src_context: src/fraud-detection
-            dockerfile: src/fraud-detection/Dockerfile
-            image_name: fraud-detection
-            k8s_deploy_path: kubernetes/frauddetection/deploy.yaml
-            container_name: frauddetectionservice
-          - service_name: accounting
-            src_context: src/accounting
-            dockerfile: src/accounting/Dockerfile
-            image_name: accounting
-            k8s_deploy_path: kubernetes/accounting/deploy.yaml
-            container_name: accountingservice
-          - service_name: image-provider
-            src_context: src/image-provider
-            dockerfile: src/image-provider/Dockerfile
-            image_name: image-provider
-            k8s_deploy_path: kubernetes/imageprovider/deploy.yaml
-            container_name: imageprovider
-          - service_name: kafka
-            src_context: src/kafka
-            dockerfile: src/kafka/Dockerfile
-            image_name: kafka
-            k8s_deploy_path: kubernetes/kafka/deploy.yaml
-            container_name: kafka
-          - service_name: load-generator
-            src_context: src/load-generator
-            dockerfile: src/load-generator/Dockerfile
-            image_name: load-generator
-            k8s_deploy_path: kubernetes/loadgenerator/deploy.yaml
-            container_name: loadgenerator
-          - service_name: payment
-            src_context: src/payment
-            dockerfile: src/payment/Dockerfile
-            image_name: payment
-            k8s_deploy_path: kubernetes/payment/deploy.yaml
-            container_name: paymentservice
-          - service_name: quote
-            src_context: src/quote
-            dockerfile: src/quote/Dockerfile
-            image_name: quote
-            k8s_deploy_path: kubernetes/quote/deploy.yaml
-            container_name: quoteservice
-          - service_name: recommendation
-            src_context: src/recommendation
-            dockerfile: src/recommendation/Dockerfile
-            image_name: recommendation
-            k8s_deploy_path: kubernetes/recommendation/deploy.yaml
-            container_name: recommendationservice
-          - service_name: shipping
-            src_context: src/shipping
-            dockerfile: src/shipping/Dockerfile
-            image_name: shipping
-            k8s_deploy_path: kubernetes/shipping/deploy.yaml
-            container_name: shippingservice
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     uses: ./.github/workflows/reusable-service-ci.yaml
     with:
       service_name: ${{ matrix.service_name }}
