@@ -7,7 +7,8 @@ resource "helm_release" "argocd" {
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"
   chart            = "argo-cd"
-  version          = "~> 7.6"
+  # Helm provider v3 requires an exact chart version (no ~> constraints).
+  version          = "7.6.12"
   namespace        = local.argocd_namespace
   create_namespace = true
 
@@ -26,7 +27,7 @@ resource "helm_release" "argocd_apps" {
   name       = "argocd-apps"
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argocd-apps"
-  version    = "~> 2.0"
+  version    = "2.0.5"
   namespace  = local.argocd_namespace
 
   values = [
