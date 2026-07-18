@@ -96,8 +96,9 @@ flowchart TB
   end
   subgraph Cluster["EKS namespace otel-demo"]
     Pod["Pod container: frontendproxy"]
-    Svc["Service ClusterIP :8080"]
+    Svc["Service LoadBalancer :8080<br/>AWS ELB public URL"]
   end
+  Internet((Users / browser)) --> Svc
   D -->|Argo CD sync| Pod
   SV -->|Argo CD sync| Svc
   Svc -->|selects labels| Pod
@@ -108,7 +109,7 @@ flowchart TB
 | File | Purpose |
 |------|---------|
 | `kubernetes/frontendproxy/deploy.yaml` | Deployment (Pods) |
-| `kubernetes/frontendproxy/svc.yaml` | ClusterIP Service |
+| `kubernetes/frontendproxy/svc.yaml` | **LoadBalancer** Service (public ELB on port 8080) |
 
 ### Deployment essentials (read `deploy.yaml`)
 
@@ -137,12 +138,12 @@ flowchart TB
 | `FLAGD_UI_PORT` | See deploy.yaml / shared OTEL guide |
 | `FRONTEND_HOST` | See deploy.yaml / shared OTEL guide |
 | `FRONTEND_PORT` | See deploy.yaml / shared OTEL guide |
-| `GRAFANA_SERVICE_HOST` | See deploy.yaml / shared OTEL guide |
-| `GRAFANA_SERVICE_PORT` | See deploy.yaml / shared OTEL guide |
+| `GRAFANA_HOST` | Envoy upstream (may be undeployed in this fork) |
+| `GRAFANA_PORT` | See deploy.yaml |
 | `IMAGE_PROVIDER_HOST` | See deploy.yaml / shared OTEL guide |
 | `IMAGE_PROVIDER_PORT` | See deploy.yaml / shared OTEL guide |
-| `JAEGER_SERVICE_HOST` | See deploy.yaml / shared OTEL guide |
-| `JAEGER_SERVICE_PORT` | See deploy.yaml / shared OTEL guide |
+| `JAEGER_HOST` | Envoy upstream (may be undeployed in this fork) |
+| `JAEGER_PORT` | See deploy.yaml |
 | `LOCUST_WEB_HOST` | See deploy.yaml / shared OTEL guide |
 | `LOCUST_WEB_PORT` | See deploy.yaml / shared OTEL guide |
 | `OTEL_COLLECTOR_HOST` | See deploy.yaml / shared OTEL guide |
@@ -152,17 +153,41 @@ flowchart TB
 
 Boilerplate `OTEL_*` meaning: see [_KUBERNETES_YAML_HELM_ARGOCD.md](./_KUBERNETES_YAML_HELM_ARGOCD.md).
 
-### Service (ClusterIP) — if present
+### Service (LoadBalancer) — public entry point
 
-```yaml\n# kubernetes/frontendproxy/svc.yaml — key ideas:\n# type: ClusterIP\n# port/targetPort: 8080\n# selector: opentelemetry.io/name: opentelemetry-demo-frontendproxy\n```
+```yaml
+# kubernetes/frontendproxy/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-demo-frontendproxy
+spec:
+  type: LoadBalancer          # ← changed from ClusterIP for public EKS access
+  ports:
+    - port: 8080
+      name: tcp-service
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    opentelemetry.io/name: opentelemetry-demo-frontendproxy
+```
 
-### DNS name used by other services
+**Why LoadBalancer here only?** This is the shop’s HTTP front door. All other
+services stay `ClusterIP` (internal). AWS creates an ELB hostname; open:
+
+```bash
+kubectl get svc opentelemetry-demo-frontendproxy -n otel-demo \
+  -o jsonpath='http://{.status.loadBalancer.ingress[0].hostname}:8080{"\n"}'
+```
+
+### DNS name used inside the cluster
 
 ```text
 opentelemetry-demo-frontendproxy:8080
 ```
 
-Example from another Deployment env: `PRODUCT_CATALOG_SERVICE_ADDR` / `CART_SERVICE_ADDR` style values use `opentelemetry-demo-<component>:8080`.
+In-cluster callers still use ClusterIP DNS for this Service. External users use
+the ELB hostname from `.status.loadBalancer.ingress`.
 
 ---
 

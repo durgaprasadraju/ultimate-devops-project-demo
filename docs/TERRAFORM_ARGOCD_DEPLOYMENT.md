@@ -221,6 +221,21 @@ Open `https://localhost:8081` and log in as `admin`.
 
 ## Step 7 — Open the Shop
 
+### Preferred: public LoadBalancer URL
+
+`kubernetes/frontendproxy/svc.yaml` is `type: LoadBalancer` (other services stay
+`ClusterIP`). After sync, AWS assigns an ELB hostname:
+
+```bash
+kubectl get svc opentelemetry-demo-frontendproxy -n otel-demo \
+  -o jsonpath='http://{.status.loadBalancer.ingress[0].hostname}:8080{"\n"}'
+```
+
+Open that `http://…elb.amazonaws.com:8080` URL in a browser (wait 1–2 minutes
+after the Service becomes `LoadBalancer` for health checks).
+
+### Alternative: port-forward (no public IP needed)
+
 ```bash
 kubectl -n otel-demo port-forward \
   svc/opentelemetry-demo-frontendproxy 8080:8080

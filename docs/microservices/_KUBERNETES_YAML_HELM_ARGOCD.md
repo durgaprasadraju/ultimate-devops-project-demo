@@ -111,10 +111,14 @@ flowchart TB
 |-------|---------|
 | `kind: Service` | Stable network endpoint |
 | `metadata.name: opentelemetry-demo-productcatalogservice` | **DNS name** inside cluster |
-| `spec.type: ClusterIP` | Internal only (no public IP) |
+| `spec.type: ClusterIP` | Internal only (no public IP) — **default for all shop APIs** |
 | `spec.ports[].port: 8080` | Port other Pods dial |
 | `spec.ports[].targetPort: 8080` | Port on the Pod |
 | `spec.selector` | Must equal Pod labels |
+
+**Public entry exception:** `kubernetes/frontendproxy/svc.yaml` uses
+`type: LoadBalancer` so users can reach the shop via an AWS ELB hostname on
+`:8080`. Do not convert every Service to LoadBalancer (cost + attack surface).
 
 **DNS form:**
 

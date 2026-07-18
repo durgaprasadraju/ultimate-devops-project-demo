@@ -1000,7 +1000,7 @@ In practice, pods use the short name: `opentelemetry-demo-cartservice:8080`
 | currency | `kubernetes/currency/svc.yaml` |
 | email | `kubernetes/email/svc.yaml` |
 | frontend | `kubernetes/frontend/svc.yaml` |
-| frontend-proxy | `kubernetes/frontendproxy/svc.yaml` |
+| frontend-proxy | `kubernetes/frontendproxy/svc.yaml` (**LoadBalancer** — public ELB) |
 | image-provider | `kubernetes/imageprovider/svc.yaml` |
 | kafka | `kubernetes/kafka/svc.yaml` |
 | load-generator | `kubernetes/loadgenerator/svc.yaml` |
@@ -1011,6 +1011,12 @@ In practice, pods use the short name: `opentelemetry-demo-cartservice:8080`
 | shipping | `kubernetes/shipping/svc.yaml` |
 | valkey | `kubernetes/valkey/svc.yaml` |
 | flagd | `kubernetes/flagd/svc.yaml` |
+
+> **Note:** All Services above are `ClusterIP` **except** frontend-proxy, which
+> was changed to `type: LoadBalancer` so the shop UI is reachable at
+> `http://<elb-hostname>:8080` without port-forward. See
+> [ISSUES_AND_FIXES.md](./ISSUES_AND_FIXES.md) issue 29.
+
 
 #### Common interview questions
 
@@ -1599,8 +1605,11 @@ sequenceDiagram
 
 ### 12.3 Kubernetes networking
 
-- **Service type:** ClusterIP (internal only)
-- **External access:** Only via Ingress → frontend-proxy
+- **Most Service types:** ClusterIP (internal only) — cart, checkout, catalog, …
+- **Public entry:** `frontendproxy` Service is **LoadBalancer**
+  (`kubernetes/frontendproxy/svc.yaml`) → AWS ELB hostname on port `8080`
+- **Optional Ingress:** `kubernetes/frontendproxy/ingress.yaml` exists but needs
+  AWS Load Balancer Controller (not installed by this fork’s Terraform)
 - **No NetworkPolicies** defined (all pods can talk to all pods — not production-safe)
 
 ### 12.4 Common beginner mistakes

@@ -874,7 +874,15 @@ kubectl get pods -n otel-demo        # ~20 pods Running
 
 ### Step 5: Open the shop
 
+`frontendproxy` Service is a **LoadBalancer** (other services stay ClusterIP):
+
 ```bash
+# Public URL (AWS ELB) — preferred
+kubectl get svc opentelemetry-demo-frontendproxy -n otel-demo \
+  -o jsonpath='http://{.status.loadBalancer.ingress[0].hostname}:8080{"\n"}'
+# Open that URL in a browser
+
+# Fallback: local port-forward
 kubectl -n otel-demo port-forward svc/opentelemetry-demo-frontendproxy 8080:8080
 # Visit http://localhost:8080
 ```

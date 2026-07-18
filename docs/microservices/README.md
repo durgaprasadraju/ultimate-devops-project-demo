@@ -180,7 +180,10 @@ flowchart TB
 
 **Notes for interviews**
 
-- **frontend-proxy** is the single HTTP front door on port `8080` (see Terraform output `app_port_forward`).
+- **frontend-proxy** is the single HTTP front door on port `8080`. Its Service is
+  `type: LoadBalancer` (`kubernetes/frontendproxy/svc.yaml`) so browsers can open
+  the AWS ELB URL; all other microservices stay `ClusterIP` (internal only).
+  Port-forward (`app_port_forward` Terraform output) still works as a fallback.
 - **Valkey** (Redis-compatible) backs the cart.
 - **Kafka** carries order events to accounting and fraud-detection.
 - **flagd** serves Open Feature flags used to inject failures/latency for demos.

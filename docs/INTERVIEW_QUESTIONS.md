@@ -172,8 +172,11 @@ flowchart LR
 **Q37. How do you destroy safely?**  
 **A:** Follow `TERRAFORM_ARGOCD_DEPLOYMENT.md` / sandbox runbooks — destroy Argo apps carefully, then Terraform destroy (watch for stuck finalizers/ELBs).
 
-**Q38. Is ALB Ingress installed by this Terraform?**  
-**A:** `frontendproxy/ingress.yaml` may exist, but AWS Load Balancer Controller is **not** fully provisioned by these TF files — use port-forward for demos unless you add the controller.
+**Q38. How do users open the shop on EKS? Is ALB Ingress installed?**  
+**A:** `kubernetes/frontendproxy/svc.yaml` is `type: LoadBalancer` → AWS ELB URL
+on `:8080` (other services stay ClusterIP). `frontendproxy/ingress.yaml` may
+exist, but AWS Load Balancer Controller is **not** provisioned by these TF files —
+port-forward remains a fallback. Details: [ISSUES_AND_FIXES.md](./ISSUES_AND_FIXES.md) #29.
 
 ---
 
