@@ -11,6 +11,7 @@ require "opentelemetry/instrumentation/sinatra"
 
 set :port, ENV["EMAIL_PORT"]
 
+
 OpenTelemetry::SDK.configure do |c|
   c.use "OpenTelemetry::Instrumentation::Sinatra"
 end
