@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: loadgenerator
-          image: durganadimpalli/load-generator:29633855132
+          image: durganadimpalli/load-generator:29634580560
           imagePullPolicy: IfNotPresent
           ports:
             
