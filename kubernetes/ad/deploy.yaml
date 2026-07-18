@@ -47,7 +47,7 @@ spec:
               value: 'opentelemetry-demo-otelcol'
             - name: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
               value: cumulative
-            - name: AD_SERVICE_PORT
+            - name: AD_PORT
               value: "8080"
             - name: FLAGD_HOST
               value: 'opentelemetry-demo-flagd'
