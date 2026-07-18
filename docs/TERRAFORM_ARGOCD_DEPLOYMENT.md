@@ -3,10 +3,11 @@
 This guide provisions the entire AWS infrastructure with **Terraform** and
 deploys the OpenTelemetry Astronomy Shop with **Argo CD** using GitOps.
 
-- Terraform builds: VPC, subnets, NAT gateway, EKS control plane, a managed
-  `t3.medium` node group, and installs Argo CD.
-- Argo CD deploys the application from Git by syncing
-  `kubernetes/complete-deploy.yaml`.
+- Terraform builds: VPC, subnets, NAT gateway, EKS control plane, either a
+  managed EC2 node group **or** Fargate profiles (`compute_type` in tfvars),
+  AWS Load Balancer Controller, and Argo CD.
+- Argo CD deploys the application from Git by syncing the per-service manifests
+  under `kubernetes/` (not only `complete-deploy.yaml`).
 
 > Designed for an 8-hour AWS sandbox. Because the sandbox auto-shuts down, manual
 > cleanup is optional (see the last section).
@@ -42,6 +43,33 @@ flowchart TB
     App -->|6. syncs to cluster| Pods
 ```
 
+## Compute mode (EC2 vs Fargate)
+
+Set in `terraform/terraform.tfvars`:
+
+```hcl
+compute_type = "ec2"      # managed node group (default)
+# compute_type = "fargate"  # serverless pods — no EC2 workers
+```
+
+| Mode | What Terraform creates | Notes |
+|------|------------------------|--------|
+| `ec2` | Managed node group (`node_*` vars) | Cheaper for always-on demos; Classic/NLB via AWS LB Controller |
+| `fargate` | Fargate profiles for `kube-system`, `argocd`, and `otel-demo` | CoreDNS `computeType=Fargate`; no EC2 nodes; NLB with IP targets required |
+
+**Do not flip `compute_type` on a live cluster** without a destroy — replacing
+nodes with Fargate (or the reverse) is disruptive. Prefer:
+
+```bash
+terraform destroy
+# edit compute_type in terraform.tfvars
+terraform apply
+```
+
+`frontendproxy` uses NLB annotations (`aws-load-balancer-type: external`,
+`nlb-target-type: ip`) so the same Service works on Fargate and EC2 once the
+AWS Load Balancer Controller (installed by Terraform) is ready.
+
 ## How It Works
 
 1. Terraform creates the network and the EKS cluster with a `t3.medium` node
@@ -59,9 +87,12 @@ flowchart TB
 terraform/
   versions.tf              # Terraform and provider version constraints
   providers.tf             # aws, kubernetes, and helm providers
-  variables.tf             # Inputs (region, sizes, git repo, etc.)
+  variables.tf             # Inputs (compute_type, region, sizes, git repo, …)
+  locals.tf                # EC2 vs Fargate conditional maps
   vpc.tf                   # VPC module
-  eks.tf                   # EKS cluster + t3.medium managed node group
+  eks.tf                   # EKS cluster + node group OR Fargate profiles
+  aws_lb_controller.tf     # AWS LB Controller (NLB IP targets for Fargate/EC2)
+  cleanup.tf               # Destroy-time wait for leftover ELBs
   argocd.tf                # Installs Argo CD + bootstraps the Application
   outputs.tf               # Helpful commands and cluster info
   terraform.tfvars.example # Copy to terraform.tfvars and edit
@@ -276,11 +307,27 @@ pointing at `opentelemetry-demo-otelcol` are expected and safe to ignore.
 
 ## Cleanup
 
-Optional, since the sandbox auto-deletes resources on shutdown:
-
 ```bash
 cd terraform
 terraform destroy
 ```
 
-This removes the app, Argo CD, the EKS cluster, and the VPC.
+**Destroy order (built into Terraform):**
+
+1. Helm releases (Argo app finalizer deletes shop resources when possible).
+2. EKS control plane / node groups / Fargate profiles.
+3. `null_resource.wait_for_elb_cleanup` — **actively** deletes leftover Classic
+   ELBs / NLBs in the VPC, waits for ENIs, then deletes `k8s-elb-*` security
+   groups (these are not in Terraform state and previously blocked VPC delete).
+4. VPC (subnets, IGW, NAT, …).
+
+If destroy still fails on the VPC, run:
+
+```bash
+VPC_ID=vpc-xxxxxxxx
+REGION=us-east-1
+aws elb describe-load-balancers --region $REGION \
+  --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].LoadBalancerName" --output text
+aws ec2 describe-security-groups --region $REGION --filters Name=vpc-id,Values=$VPC_ID \
+  --query "SecurityGroups[?starts_with(GroupName,'k8s-')].[GroupId,GroupName]" --output table
+```

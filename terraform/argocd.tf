@@ -1,7 +1,3 @@
-locals {
-  argocd_namespace = "argocd"
-}
-
 # Install Argo CD itself (server, repo-server, controller, and the CRDs).
 resource "helm_release" "argocd" {
   name             = "argocd"
@@ -17,7 +13,10 @@ resource "helm_release" "argocd" {
   wait    = true
   timeout = 600
 
-  depends_on = [module.eks]
+  depends_on = [
+    module.eks,
+    helm_release.aws_lb_controller,
+  ]
 }
 
 # Bootstrap the application: a single Argo CD Application that syncs the
@@ -29,6 +28,10 @@ resource "helm_release" "argocd_apps" {
   chart      = "argocd-apps"
   version    = "2.0.5"
   namespace  = local.argocd_namespace
+
+  # Long enough for Application finalizer to prune shop + LoadBalancer on destroy.
+  wait    = true
+  timeout = 900
 
   values = [
     yamlencode({
@@ -71,5 +74,11 @@ resource "helm_release" "argocd_apps" {
     })
   ]
 
-  depends_on = [helm_release.argocd]
+  # wait_for_elb_cleanup must be destroyed AFTER this release so Argo's
+  # resources-finalizer can delete the LoadBalancer Service first, then the
+  # null_resource waits for the AWS ELB/NLB to disappear before VPC teardown.
+  depends_on = [
+    helm_release.argocd,
+    null_resource.wait_for_elb_cleanup,
+  ]
 }

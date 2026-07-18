@@ -4,6 +4,11 @@ region          = "us-east-1"
 cluster_name    = "otel-demo"
 cluster_version = "1.30"
 
+# Worker compute: "ec2" (managed node group) or "fargate" (serverless).
+# Switching modes on an existing cluster is disruptive — prefer destroy + apply.
+compute_type = "ec2"
+
+# Used only when compute_type = "ec2"
 node_instance_type = "t3.medium"
 node_desired_size  = 3
 node_min_size      = 3

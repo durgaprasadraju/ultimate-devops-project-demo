@@ -22,26 +22,37 @@ variable "vpc_cidr" {
   default     = "10.0.0.0/16"
 }
 
+variable "compute_type" {
+  description = "Worker compute: \"ec2\" (managed node group) or \"fargate\" (serverless pods)."
+  type        = string
+  default     = "ec2"
+
+  validation {
+    condition     = contains(["ec2", "fargate"], var.compute_type)
+    error_message = "compute_type must be either \"ec2\" or \"fargate\"."
+  }
+}
+
 variable "node_instance_type" {
-  description = "EC2 instance type for the managed worker nodes."
+  description = "EC2 instance type for the managed worker nodes (ignored when compute_type = fargate)."
   type        = string
   default     = "t3.medium"
 }
 
 variable "node_desired_size" {
-  description = "Desired number of worker nodes."
+  description = "Desired number of worker nodes (ignored when compute_type = fargate)."
   type        = number
   default     = 3
 }
 
 variable "node_min_size" {
-  description = "Minimum number of worker nodes."
+  description = "Minimum number of worker nodes (ignored when compute_type = fargate)."
   type        = number
   default     = 3
 }
 
 variable "node_max_size" {
-  description = "Maximum number of worker nodes."
+  description = "Maximum number of worker nodes (ignored when compute_type = fargate)."
   type        = number
   default     = 4
 }

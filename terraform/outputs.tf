@@ -1,3 +1,8 @@
+output "compute_type" {
+  description = "Worker compute mode (ec2 or fargate)."
+  value       = var.compute_type
+}
+
 output "cluster_name" {
   description = "EKS cluster name."
   value       = module.eks.cluster_name

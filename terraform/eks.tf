@@ -15,22 +15,15 @@ module "eks" {
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-  cluster_addons = {
-    coredns    = {}
-    kube-proxy = {}
-    vpc-cni    = {}
-  }
+  cluster_addons = local.cluster_addons
 
-  eks_managed_node_groups = {
-    workers = {
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = [var.node_instance_type]
-
-      desired_size = var.node_desired_size
-      min_size     = var.node_min_size
-      max_size     = var.node_max_size
-    }
-  }
+  # Exactly one compute path: managed EC2 node group OR Fargate profiles.
+  eks_managed_node_groups = local.eks_managed_node_groups
+  fargate_profiles        = local.fargate_profiles
 
   tags = var.tags
+
+  # Ensures destroy runs: EKS → ELB/SG cleanup → VPC (public subnets must not
+  # tear down while a Classic/NLB ELB still holds ENIs).
+  depends_on = [null_resource.wait_for_elb_cleanup]
 }
