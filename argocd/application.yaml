@@ -1,0 +1,34 @@
+# Standalone Argo CD Application.
+#
+# Terraform already creates this Application via the argocd-apps Helm release.
+# Use this file only if you install Argo CD manually and want to bootstrap the
+# app by hand:
+#
+#   kubectl apply -n argocd -f argocd/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-demo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/durgaprasadraju/ultimate-devops-project-demo.git
+    targetRevision: main
+    path: kubernetes
+    directory:
+      # Sync per-service manifests (CI updates image tags there).
+      # Exclude complete-deploy.yaml to avoid duplicating Deployments/Services.
+      recurse: true
+      exclude: complete-deploy.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: otel-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

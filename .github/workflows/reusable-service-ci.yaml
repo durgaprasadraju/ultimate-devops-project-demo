@@ -1,0 +1,118 @@
+# Reusable workflow: build/push a service image and update its K8s Deployment.
+#
+# Called by product-catalog-ci and microservices-ci. Argo CD watches the
+# per-service manifests under kubernetes/, so updating deploy.yaml is enough
+# for GitOps rollout.
+
+name: reusable-service-ci
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: Human-readable service name (for logs/commits)
+        required: true
+        type: string
+      src_context:
+        description: Docker build context path (e.g. src/product-catalog)
+        required: true
+        type: string
+      dockerfile:
+        description: Path to Dockerfile relative to repo root
+        required: true
+        type: string
+      image_name:
+        description: Docker Hub image name (without registry/user)
+        required: true
+        type: string
+      k8s_deploy_path:
+        description: Path to the Deployment manifest CI updates
+        required: true
+        type: string
+      container_name:
+        description: Container name inside the Deployment whose image to update
+        required: true
+        type: string
+      push_image:
+        description: If true, push image and update Git manifests (use on main)
+        required: true
+        type: boolean
+    secrets:
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_TOKEN:
+        required: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: inputs.push_image
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build (and optionally push) image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.src_context }}
+          file: ${{ inputs.dockerfile }}
+          push: ${{ inputs.push_image }}
+          tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update image tag in Kubernetes Deployment
+        if: inputs.push_image
+        env:
+          IMAGE: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:${{ github.run_id }}
+          DEPLOY: ${{ inputs.k8s_deploy_path }}
+          CONTAINER: ${{ inputs.container_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$DEPLOY" ]]; then
+            echo "Missing manifest: $DEPLOY"
+            exit 1
+          fi
+          # Update only the named app container (skip initContainers / sidecars).
+          python3 <<'PY'
+          import os, re, pathlib
+          path = pathlib.Path(os.environ["DEPLOY"])
+          image = os.environ["IMAGE"]
+          container = os.environ["CONTAINER"]
+          text = path.read_text()
+          pattern = rf"(- name: {re.escape(container)}\n(?:.*\n)*?\s+image:\s*)([^\n]+)"
+          new_text, n = re.subn(pattern, rf"\g<1>{image}", text, count=1)
+          if n != 1:
+              raise SystemExit(f"Expected to update image for container {container!r} once, got {n}")
+          path.write_text(new_text)
+          print(f"Updated {path}: {container} -> {image}")
+          PY
+
+      - name: Commit and push manifest update
+        if: inputs.push_image
+        run: |
+          set -euo pipefail
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add "${{ inputs.k8s_deploy_path }}"
+          if git diff --staged --quiet; then
+            echo "No manifest changes to commit"
+            exit 0
+          fi
+          git commit -m "[CI]: Update ${{ inputs.service_name }} image tag to ${{ github.run_id }}"
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin "HEAD:${{ github.ref_name }}"

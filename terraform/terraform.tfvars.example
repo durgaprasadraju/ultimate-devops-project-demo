@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and edit as needed.
+
+region          = "us-east-1"
+cluster_name    = "otel-demo"
+cluster_version = "1.30"
+
+node_instance_type = "t3.medium"
+node_desired_size  = 3
+node_min_size      = 3
+node_max_size      = 4
+
+# Point Argo CD at your fork/branch if different.
+git_repo_url        = "https://github.com/durgaprasadraju/ultimate-devops-project-demo.git"
+git_target_revision = "main"
+git_manifest_path   = "kubernetes"
+app_namespace       = "otel-demo"
