@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-demo-otelcol
+  labels:
+    opentelemetry.io/name: opentelemetry-demo-otelcol
+    app.kubernetes.io/instance: opentelemetry-demo
+    app.kubernetes.io/component: otelcol
+    app.kubernetes.io/name: opentelemetry-demo-otelcol
+    app.kubernetes.io/version: "0.133.0"
+    app.kubernetes.io/part-of: opentelemetry-demo
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4317
+      name: otlp-grpc
+      targetPort: 4317
+      protocol: TCP
+    - port: 4318
+      name: otlp-http
+      targetPort: 4318
+      protocol: TCP
+  selector:
+    opentelemetry.io/name: opentelemetry-demo-otelcol

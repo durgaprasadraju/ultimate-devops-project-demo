@@ -47,7 +47,7 @@
 | 27 | GitOps | Argo `selfHeal` reverted kubectl-only fixes | Push to Git required |
 | 28 | Ops | Accidental `kubectl apply` into `default` namespace | Clean up default |
 | 29 | Access | `frontendproxy` ClusterIP → LoadBalancer (`svc.yaml`) | Fixed (ELB URL) |
-| 30 | Observability | Missing `otelcol` — OTLP export DNS errors | Known gap (non-fatal) |
+| 30 | Observability | Missing `otelcol` — OTLP export DNS errors | Fixed (`kubernetes/otelcol/`) |
 
 ---
 
@@ -699,27 +699,41 @@ ClusterIP by design.
 
 ### Issue
 
-Pods still log:
+Pods logged:
 
 ```text
 failed to upload metrics / traces export: ...
-name resolver error ... opentelemetry-demo-otelcol
+name resolver error ... produced zero addresses
 ```
 
-No `opentelemetry-demo-otelcol` Deployment/Service under the Argo sync path in
-this fork.
+Services already pointed at `opentelemetry-demo-otelcol:4317` / `:4318`, but this
+fork had **no** collector Deployment/Service under `kubernetes/` for Argo to sync
+(only Docker Compose configs in `src/otel-collector/`).
 
 ### Impact
 
-- **Non-fatal** for shopping: gRPC/HTTP between shop services still works.
-- Telemetry export to a collector fails until otelcol (and usually Jaeger/Grafana)
-  are deployed.
+- Shopping still worked (non-fatal).
+- Traces/metrics/logs could not be exported until a collector existed.
 
-### Status
+### How it was fixed
 
-**Known gap** — shop is up without the full observability stack. Future work:
-add collector (+ optional Jaeger/Grafana) under `kubernetes/`, or document
-disabling OTLP exporters for short sandboxes.
+Added GitOps manifests:
+
+| File | Purpose |
+|------|---------|
+| `kubernetes/otelcol/configmap.yaml` | Minimal OTLP→debug pipeline (4317/4318) |
+| `kubernetes/otelcol/deploy.yaml` | `opentelemetry-collector-contrib:0.133.0` |
+| `kubernetes/otelcol/svc.yaml` | ClusterIP `opentelemetry-demo-otelcol` ports 4317 + 4318 |
+
+Collector accepts OTLP and logs to stdout via the `debug` exporter (Jaeger /
+Prometheus / OpenSearch are **not** required for this fix). After deploy, otelcol
+logs show `Traces` / `Metrics` / `Logs` batches arriving.
+
+If a service still prints resolver errors right after create, restart that
+Deployment once (gRPC clients may cache failed DNS from before the Service existed).
+
+**Status:** Fixed. Push `kubernetes/otelcol/` to `main` so Argo keeps it.
+Optional later: add Jaeger/Grafana and change exporters from `debug` to OTLP.
 
 ---
 
@@ -745,6 +759,7 @@ GitHub Actions
               EKS namespace otel-demo
                 • Shop Deployments Running
                 • frontendproxy Service type LoadBalancer
+                • otelcol Receiving OTLP (debug exporter)
                 • Public URL: http://<elb-dns>:8080
 ```
 
@@ -767,6 +782,7 @@ GitHub Actions
 | `terraform/argocd.tf` | Exact Helm versions; Argo app source |
 | `kubernetes/*/deploy.yaml` | Env names matching app code |
 | `kubernetes/frontendproxy/svc.yaml` | **LoadBalancer** (public ELB); other `*/svc.yaml` stay ClusterIP |
+| `kubernetes/otelcol/` | OTLP collector (ConfigMap + Deployment + Service) |
 | `src/currency/src/server.cpp` | New otel-cpp semconv API |
 | `src/recommendation/requirements.txt` | `setuptools>=69,<82` |
 | `src/load-generator/requirements.txt` | Same setuptools pin |
@@ -804,7 +820,9 @@ kubectl logs -n otel-demo deploy/opentelemetry-demo-checkoutservice --tail=50
 16. **No public URL?** Confirm `kubernetes/frontendproxy/svc.yaml` is
     `type: LoadBalancer` (not ClusterIP); wait for `EXTERNAL-IP` / hostname
     (issue 29). Other services should remain ClusterIP.
-17. **OTLP DNS errors only?** Missing otelcol (issue 30) — shop can still run.
+17. **OTLP DNS / export errors?** Ensure `kubernetes/otelcol/` is applied and
+    Service `opentelemetry-demo-otelcol` exists; restart noisy Deployments once
+    (issue 30).
 
 ---
 
