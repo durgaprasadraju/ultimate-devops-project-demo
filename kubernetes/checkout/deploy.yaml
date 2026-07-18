@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: checkoutservice
-          image: durganadimpalli/checkout:29634580560
+          image: durganadimpalli/checkout:29635525693
           imagePullPolicy: IfNotPresent
           ports:
             
