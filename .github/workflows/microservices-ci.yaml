@@ -8,6 +8,8 @@
 name: microservices-ci
 
 on:
+  # Manual trigger: builds and deploys ALL services (initial bootstrap or full rebuild).
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
@@ -94,24 +96,27 @@ jobs:
           ]
 
           event = os.environ.get("GITHUB_EVENT_NAME", "")
-          if event == "pull_request":
-            base = os.environ["GITHUB_BASE_REF"]
-            diff_range = f"origin/{base}...HEAD"
+          if event == "workflow_dispatch":
+            # Manual run: build every service (files=None means "no filter").
+            files = None
           else:
-            with open(os.environ["GITHUB_EVENT_PATH"]) as fh:
-              before = json.load(fh).get("before", "")
-            diff_range = f"{before}...HEAD" if before and not before.startswith("0000000") else "HEAD~1...HEAD"
-
-          try:
-            files = subprocess.check_output(
-                ["git", "diff", "--name-only", diff_range], text=True
-            ).splitlines()
-          except subprocess.CalledProcessError:
-            files = []
+            if event == "pull_request":
+              base = os.environ["GITHUB_BASE_REF"]
+              diff_range = f"origin/{base}...HEAD"
+            else:
+              with open(os.environ["GITHUB_EVENT_PATH"]) as fh:
+                before = json.load(fh).get("before", "")
+              diff_range = f"{before}...HEAD" if before and not before.startswith("0000000") else "HEAD~1...HEAD"
+            try:
+              files = subprocess.check_output(
+                  ["git", "diff", "--name-only", diff_range], text=True
+              ).splitlines()
+            except subprocess.CalledProcessError:
+              files = []
 
           include = []
           for name, prefix, context, dockerfile, image, deploy, container in services:
-            if any(f == prefix or f.startswith(prefix + "/") for f in files):
+            if files is None or any(f == prefix or f.startswith(prefix + "/") for f in files):
               include.append({
                 "service_name": name,
                 "src_context": context,
@@ -146,7 +151,7 @@ jobs:
       image_name: ${{ matrix.image_name }}
       k8s_deploy_path: ${{ matrix.k8s_deploy_path }}
       container_name: ${{ matrix.container_name }}
-      push_image: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      push_image: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}

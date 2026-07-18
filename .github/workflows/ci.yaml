@@ -3,6 +3,8 @@
 name: product-catalog-ci
 
 on:
+  # Manual trigger: build and deploy product-catalog on demand.
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
@@ -68,7 +70,7 @@ jobs:
       image_name: product-catalog
       k8s_deploy_path: kubernetes/productcatalog/deploy.yaml
       container_name: productcatalogservice
-      push_image: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      push_image: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
