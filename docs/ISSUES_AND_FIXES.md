@@ -35,6 +35,7 @@
 | 17 | Docker build | Java agent URL 404 (missing OTEL_JAVA_AGENT_VERSION) | Fixed |
 | 18 | Docker build | Currency CMake `IN_LIST` / CMP0057 (cmake 3.1 vs otel-cpp 1.23) | Fixed |
 | 19 | Docs | Per-service + interview study guides with diagrams | Done |
+| 20 | Docker build | Recommendation: `No module named pkg_resources` | Fixed |
 
 ---
 
@@ -558,6 +559,30 @@ Helm/Argo, interview Q&A) so the project can be studied for interviews.
 
 ---
 
+## 20. Recommendation Docker build: `No module named pkg_resources`
+
+### Issue
+
+```text
+RUN opentelemetry-bootstrap -a install
+ModuleNotFoundError: No module named 'pkg_resources'
+```
+
+### Cause
+
+`opentelemetry-bootstrap` (from `opentelemetry-distro`) imports `pkg_resources`, which
+ships with **setuptools**. Python **3.12** slim images no longer include setuptools by
+default, so the bootstrap step fails after `pip install -r requirements.txt`.
+
+### How it was fixed
+
+1. Added `setuptools>=69.0.0` to `src/recommendation/requirements.txt`
+2. Updated `ENV RECOMMENDATION_PORT=1010` (non-legacy format) in the Dockerfile
+
+**Status:** Fixed.
+
+---
+
 ## End state (what “fixed” looks like)
 
 ```text
@@ -610,6 +635,7 @@ GitHub Actions
 9. **Currency build exit 128?** Pass / default `OPENTELEMETRY_CPP_VERSION` (see issue 16).
 10. **Java agent 404 (`.../download/v/...`)?** Pass / default `OTEL_JAVA_AGENT_VERSION` (see issue 17).
 11. **Currency CMake `IN_LIST` / CMP0057?** `cmake_minimum_required(VERSION 3.26)` (see issue 18).
+12. **Recommendation `pkg_resources` missing?** Install `setuptools` before `opentelemetry-bootstrap` (see issue 20).
 
 ---
 
