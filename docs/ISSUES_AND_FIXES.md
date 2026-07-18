@@ -30,6 +30,7 @@
 | 14 | Git | Non-fast-forward push rejected | Fixed with rebase + push |
 | 15 | Git | Cursor agent cannot push to GitHub | Use local terminal |
 | 16 | Docker build | Currency `git clone` exit 128 (missing CPP version) | Fixed |
+| 17 | Docker build | Java agent URL 404 (missing OTEL_JAVA_AGENT_VERSION) | Fixed |
 
 ---
 
@@ -495,6 +496,33 @@ so the clone target became branch `v` (empty version) → git exit 128.
 
 ---
 
+## 17. Fraud-detection / Kafka Docker build: Java agent URL 404
+
+### Issue
+
+```text
+ADD .../releases/download/v/opentelemetry-javaagent.jar
+ERROR: invalid response status 404
+```
+
+### Cause
+
+Same class of bug as currency (#16): `OTEL_JAVA_AGENT_VERSION` was empty in CI,
+so the download URL became `.../download/v/...` (missing version) → 404.
+Affects `src/fraud-detection/Dockerfile` and `src/kafka/Dockerfile`.
+`.env` defines `OTEL_JAVA_AGENT_VERSION=2.20.1` for docker-compose only.
+
+### How it was fixed
+
+1. Default in both Dockerfiles: `ARG OTEL_JAVA_AGENT_VERSION=2.20.1`
+2. **Systemic fix:** `reusable-service-ci.yaml` now always reads `.env` and passes
+   `OPENTELEMETRY_CPP_VERSION` and `OTEL_JAVA_AGENT_VERSION` as Docker build-args
+   for **every** service build (same values docker-compose uses)
+3. Builds pin `platforms: linux/amd64` so `TARGETARCH` is set for cart,
+   accounting, and shipping (they need it for `dotnet` / `wget` paths)
+
+---
+
 ## Checklist if something breaks again
 
 1. **Workflow invalid?** Callers must grant `permissions: contents: write`.
@@ -507,6 +535,7 @@ so the clone target became branch `v` (empty version) → git exit 128.
    syncs the folder CI actually edits; check Argo UI for sync errors.
 8. **Never** commit tokens or force-push `main`.
 9. **Currency build exit 128?** Pass / default `OPENTELEMETRY_CPP_VERSION` (see issue 16).
+10. **Java agent 404 (`.../download/v/...`)?** Pass / default `OTEL_JAVA_AGENT_VERSION` (see issue 17).
 
 ---
 

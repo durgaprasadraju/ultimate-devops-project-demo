@@ -70,6 +70,44 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      # docker-compose passes these from .env; CI must too or ARG expands empty
+      # (e.g. git clone .../v  or .../download/v/agent.jar → 404 / exit 128).
+      - name: Prepare Docker build-args from .env
+        id: buildargs
+        env:
+          EXTRA_BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          keys = {
+              "OPENTELEMETRY_CPP_VERSION": "1.23.0",
+              "OTEL_JAVA_AGENT_VERSION": "2.20.1",
+          }
+          vals = dict(keys)
+          env_path = Path(".env")
+          if env_path.exists():
+              for line in env_path.read_text().splitlines():
+                  line = line.strip()
+                  if not line or line.startswith("#") or "=" not in line:
+                      continue
+                  k, _, v = line.partition("=")
+                  if k in keys:
+                      vals[k] = v.strip().strip('"').strip("'")
+
+          lines = [f"{k}={v}" for k, v in vals.items()]
+          extra = os.environ.get("EXTRA_BUILD_ARGS", "").strip()
+          if extra:
+              lines.extend(extra.splitlines())
+
+          out = "\n".join(lines)
+          print("Docker build-args:\n" + out)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"args<<EOF\n{out}\nEOF\n")
+          PY
+
       - name: Build (and optionally push) image
         uses: docker/build-push-action@v6
         with:
@@ -77,7 +115,9 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: ${{ inputs.push_image }}
           tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:${{ github.run_id }}
-          build-args: ${{ inputs.build_args }}
+          # Ensures TARGETARCH is set for cart/accounting/shipping Dockerfiles.
+          platforms: linux/amd64
+          build-args: ${{ steps.buildargs.outputs.args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
