@@ -48,8 +48,6 @@ on:
       - "src/quote/**"
       - "src/recommendation/**"
       - "src/shipping/**"
-      - ".github/workflows/microservices-ci.yaml"
-      - ".github/workflows/reusable-service-ci.yaml"
 
 jobs:
   changes:
