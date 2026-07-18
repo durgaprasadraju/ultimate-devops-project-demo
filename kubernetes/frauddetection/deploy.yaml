@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: frauddetectionservice
-          image: durganadimpalli/fraud-detection:29634413645
+          image: durganadimpalli/fraud-detection:29634580560
           imagePullPolicy: IfNotPresent
           env:
             - name: OTEL_SERVICE_NAME
