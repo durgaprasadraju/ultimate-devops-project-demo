@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: accountingservice
-          image: durganadimpalli/accounting:29633855132
+          image: durganadimpalli/accounting:29634580560
           imagePullPolicy: IfNotPresent
           env:
             - name: OTEL_SERVICE_NAME
