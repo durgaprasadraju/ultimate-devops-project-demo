@@ -28,7 +28,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: shippingservice
-          image: 'ghcr.io/open-telemetry/demo:1.12.0-shippingservice'
+          image: durganadimpalli/shipping:29633855132
           imagePullPolicy: IfNotPresent
           ports:
             
