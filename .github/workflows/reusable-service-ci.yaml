@@ -37,6 +37,11 @@ on:
         description: If true, push image and update Git manifests (use on main)
         required: true
         type: boolean
+      build_args:
+        description: Optional Docker build-args (KEY=VALUE lines)
+        required: false
+        type: string
+        default: ""
     secrets:
       DOCKER_USERNAME:
         required: true
@@ -72,6 +77,7 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: ${{ inputs.push_image }}
           tags: ${{ secrets.DOCKER_USERNAME }}/${{ inputs.image_name }}:${{ github.run_id }}
+          build-args: ${{ inputs.build_args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

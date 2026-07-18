@@ -70,29 +70,29 @@ jobs:
           python3 <<'PY'
           import json, os, subprocess
 
-          # service_name, src prefix, docker context, dockerfile, image, deploy manifest, container
+          # service_name, src prefix, docker context, dockerfile, image, deploy, container, build_args
           #
           # Context note: most Dockerfiles here COPY from ./src/<service>/ and
           # the shared ./pb/ folder, so they must be built from the repo root
           # ("."). Only ad, recommendation (and product-catalog in ci.yaml)
           # use their own folder as the build context.
           services = [
-            ("ad",              "src/ad",              "src/ad",              "src/ad/Dockerfile",              "ad",              "kubernetes/ad/deploy.yaml",              "adservice"),
-            ("cart",            "src/cart",            ".",                   "src/cart/src/Dockerfile",        "cart",            "kubernetes/cart/deploy.yaml",            "cartservice"),
-            ("checkout",        "src/checkout",        ".",                   "src/checkout/Dockerfile",        "checkout",        "kubernetes/checkout/deploy.yaml",        "checkoutservice"),
-            ("currency",        "src/currency",        ".",                   "src/currency/Dockerfile",        "currency",        "kubernetes/currency/deploy.yaml",        "currencyservice"),
-            ("email",           "src/email",           ".",                   "src/email/Dockerfile",           "email",           "kubernetes/email/deploy.yaml",           "emailservice"),
-            ("frontend",        "src/frontend",        ".",                   "src/frontend/Dockerfile",        "frontend",        "kubernetes/frontend/deploy.yaml",        "frontend"),
-            ("frontend-proxy",  "src/frontend-proxy",  ".",                   "src/frontend-proxy/Dockerfile",  "frontend-proxy",  "kubernetes/frontendproxy/deploy.yaml",   "frontendproxy"),
-            ("fraud-detection", "src/fraud-detection", ".",                   "src/fraud-detection/Dockerfile", "fraud-detection", "kubernetes/frauddetection/deploy.yaml",  "frauddetectionservice"),
-            ("accounting",      "src/accounting",      ".",                   "src/accounting/Dockerfile",      "accounting",      "kubernetes/accounting/deploy.yaml",      "accountingservice"),
-            ("image-provider",  "src/image-provider",  ".",                   "src/image-provider/Dockerfile",  "image-provider",  "kubernetes/imageprovider/deploy.yaml",   "imageprovider"),
-            ("kafka",           "src/kafka",           "src/kafka",           "src/kafka/Dockerfile",           "kafka",           "kubernetes/kafka/deploy.yaml",           "kafka"),
-            ("load-generator",  "src/load-generator",  ".",                   "src/load-generator/Dockerfile",  "load-generator",  "kubernetes/loadgenerator/deploy.yaml",   "loadgenerator"),
-            ("payment",         "src/payment",         ".",                   "src/payment/Dockerfile",         "payment",         "kubernetes/payment/deploy.yaml",         "paymentservice"),
-            ("quote",           "src/quote",           ".",                   "src/quote/Dockerfile",           "quote",           "kubernetes/quote/deploy.yaml",           "quoteservice"),
-            ("recommendation",  "src/recommendation",  "src/recommendation",  "src/recommendation/Dockerfile",  "recommendation",  "kubernetes/recommendation/deploy.yaml",  "recommendationservice"),
-            ("shipping",        "src/shipping",        ".",                   "src/shipping/Dockerfile",        "shipping",        "kubernetes/shipping/deploy.yaml",        "shippingservice"),
+            ("ad",              "src/ad",              "src/ad",              "src/ad/Dockerfile",              "ad",              "kubernetes/ad/deploy.yaml",              "adservice", ""),
+            ("cart",            "src/cart",            ".",                   "src/cart/src/Dockerfile",        "cart",            "kubernetes/cart/deploy.yaml",            "cartservice", ""),
+            ("checkout",        "src/checkout",        ".",                   "src/checkout/Dockerfile",        "checkout",        "kubernetes/checkout/deploy.yaml",        "checkoutservice", ""),
+            ("currency",        "src/currency",        ".",                   "src/currency/Dockerfile",        "currency",        "kubernetes/currency/deploy.yaml",        "currencyservice", "OPENTELEMETRY_CPP_VERSION=1.23.0"),
+            ("email",           "src/email",           ".",                   "src/email/Dockerfile",           "email",           "kubernetes/email/deploy.yaml",           "emailservice", ""),
+            ("frontend",        "src/frontend",        ".",                   "src/frontend/Dockerfile",        "frontend",        "kubernetes/frontend/deploy.yaml",        "frontend", ""),
+            ("frontend-proxy",  "src/frontend-proxy",  ".",                   "src/frontend-proxy/Dockerfile",  "frontend-proxy",  "kubernetes/frontendproxy/deploy.yaml",   "frontendproxy", ""),
+            ("fraud-detection", "src/fraud-detection", ".",                   "src/fraud-detection/Dockerfile", "fraud-detection", "kubernetes/frauddetection/deploy.yaml",  "frauddetectionservice", ""),
+            ("accounting",      "src/accounting",      ".",                   "src/accounting/Dockerfile",      "accounting",      "kubernetes/accounting/deploy.yaml",      "accountingservice", ""),
+            ("image-provider",  "src/image-provider",  ".",                   "src/image-provider/Dockerfile",  "image-provider",  "kubernetes/imageprovider/deploy.yaml",   "imageprovider", ""),
+            ("kafka",           "src/kafka",           "src/kafka",           "src/kafka/Dockerfile",           "kafka",           "kubernetes/kafka/deploy.yaml",           "kafka", ""),
+            ("load-generator",  "src/load-generator",  ".",                   "src/load-generator/Dockerfile",  "load-generator",  "kubernetes/loadgenerator/deploy.yaml",   "loadgenerator", ""),
+            ("payment",         "src/payment",         ".",                   "src/payment/Dockerfile",         "payment",         "kubernetes/payment/deploy.yaml",         "paymentservice", ""),
+            ("quote",           "src/quote",           ".",                   "src/quote/Dockerfile",           "quote",           "kubernetes/quote/deploy.yaml",           "quoteservice", ""),
+            ("recommendation",  "src/recommendation",  "src/recommendation",  "src/recommendation/Dockerfile",  "recommendation",  "kubernetes/recommendation/deploy.yaml",  "recommendationservice", ""),
+            ("shipping",        "src/shipping",        ".",                   "src/shipping/Dockerfile",        "shipping",        "kubernetes/shipping/deploy.yaml",        "shippingservice", ""),
           ]
 
           event = os.environ.get("GITHUB_EVENT_NAME", "")
@@ -115,7 +115,7 @@ jobs:
               files = []
 
           include = []
-          for name, prefix, context, dockerfile, image, deploy, container in services:
+          for name, prefix, context, dockerfile, image, deploy, container, build_args in services:
             if files is None or any(f == prefix or f.startswith(prefix + "/") for f in files):
               include.append({
                 "service_name": name,
@@ -124,6 +124,7 @@ jobs:
                 "image_name": image,
                 "k8s_deploy_path": deploy,
                 "container_name": container,
+                "build_args": build_args,
               })
 
           print("changed files:", files)
@@ -151,6 +152,7 @@ jobs:
       image_name: ${{ matrix.image_name }}
       k8s_deploy_path: ${{ matrix.k8s_deploy_path }}
       container_name: ${{ matrix.container_name }}
+      build_args: ${{ matrix.build_args }}
       push_image: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
     secrets:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
