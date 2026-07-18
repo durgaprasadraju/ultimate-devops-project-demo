@@ -6,7 +6,9 @@
 >
 > Related: [GIT_ISSUES_EXPLAINED.md](./GIT_ISSUES_EXPLAINED.md) ·
 > [CI_CD_PIPELINE.md](./CI_CD_PIPELINE.md) ·
-> [ARGOCD_TF_EXPLAINED.md](./ARGOCD_TF_EXPLAINED.md)
+> [ARGOCD_TF_EXPLAINED.md](./ARGOCD_TF_EXPLAINED.md) ·
+> [microservices/README.md](./microservices/README.md) ·
+> [INTERVIEW_QUESTIONS.md](./INTERVIEW_QUESTIONS.md)
 
 ---
 
@@ -31,6 +33,8 @@
 | 15 | Git | Cursor agent cannot push to GitHub | Use local terminal |
 | 16 | Docker build | Currency `git clone` exit 128 (missing CPP version) | Fixed |
 | 17 | Docker build | Java agent URL 404 (missing OTEL_JAVA_AGENT_VERSION) | Fixed |
+| 18 | Docker build | Currency CMake `IN_LIST` / CMP0057 (cmake 3.1 vs otel-cpp 1.23) | Fixed |
+| 19 | Docs | Per-service + interview study guides with diagrams | Done |
 
 ---
 
@@ -437,41 +441,6 @@ git push origin main
 
 ---
 
-## End state (what “fixed” looks like)
-
-```text
-Developer / workflow_dispatch
-        │
-        ▼
-GitHub Actions
-  • product-catalog-ci  (Go + Docker)
-  • microservices-ci    (all other services; path filter OR build-all)
-        │
-        ├─► Docker Hub  (durganadimpalli/<service>:<run_id>)
-        │
-        └─► Commit image tag into kubernetes/<service>/deploy.yaml
-                │
-                ▼
-         Argo CD (otel-demo)
-           syncs kubernetes/* except complete-deploy.yaml
-                │
-                ▼
-              EKS
-```
-
-### Key files after all fixes
-
-| File | Purpose |
-|------|---------|
-| `.github/workflows/ci.yaml` | Product-catalog CI + manual run |
-| `.github/workflows/microservices-ci.yaml` | Other services + manual build-all |
-| `.github/workflows/reusable-service-ci.yaml` | Shared Docker + GitOps commit |
-| `terraform/argocd.tf` | Argo syncs per-service manifests |
-| `argocd/application.yaml` | Same for manual Argo bootstrap |
-| GitHub secrets `DOCKER_USERNAME` / `DOCKER_TOKEN` | Registry auth |
-
----
-
 ## 16. Currency Docker build: `git clone` exit code 128
 
 ### Issue
@@ -491,8 +460,9 @@ so the clone target became branch `v` (empty version) → git exit 128.
 ### How it was fixed
 
 1. Default in Dockerfile: `ARG OPENTELEMETRY_CPP_VERSION=1.23.0`
-2. CI matrix / reusable workflow pass
-   `OPENTELEMETRY_CPP_VERSION=1.23.0` as a Docker `build-arg` for currency
+2. CI / reusable workflow always loads version args from `.env` (see issue 17)
+
+**Status:** Fixed.
 
 ---
 
@@ -521,6 +491,109 @@ Affects `src/fraud-detection/Dockerfile` and `src/kafka/Dockerfile`.
 3. Builds pin `platforms: linux/amd64` so `TARGETARCH` is set for cart,
    accounting, and shipping (they need it for `dotnet` / `wget` paths)
 
+**Status:** Fixed.
+
+---
+
+## 18. Currency CMake: `IN_LIST` / CMP0057 after otel-cpp installs
+
+### Issue
+
+After clone/build of opentelemetry-cpp succeeded, currency app configure failed:
+
+```text
+CMake Error at .../opentelemetry-cpp/find-package-support-functions.cmake:119 (if):
+  if given arguments:
+    "Microsoft.GSL" "IN_LIST" "COMPONENT_api_THIRDPARTY_DEPENDS"
+  Unknown arguments specified
+-- Configuring incomplete, errors occurred!
+```
+
+(Often preceded by a CMP0057 policy warning about `IN_LIST`.)
+
+### Cause
+
+- CI now builds with `OPENTELEMETRY_CPP_VERSION=1.23.0` (matches `.env` / demo 2.1.3).
+- That package’s CMake config uses modern `if(... IN_LIST ...)` (policy CMP0057).
+- This fork’s currency `CMakeLists.txt` still had `cmake_minimum_required(VERSION 3.1)`
+  (old 1.12-era source), so CMake ran with legacy policy and rejected `IN_LIST`.
+- Upstream demo 2.1.3 already requires `cmake_minimum_required(VERSION 3.26)`.
+
+### How it was fixed
+
+Aligned with upstream 2.1.3:
+
+```cmake
+# src/currency/CMakeLists.txt
+# src/currency/genproto/CMakeLists.txt
+cmake_minimum_required(VERSION 3.26)
+```
+
+Alpine 3.18 in the currency Dockerfile already provides CMake ≥ 3.26, so the
+requirement is satisfiable in CI.
+
+**Status:** Fixed (commit `fix(currency): require CMake 3.26...`).
+
+---
+
+## 19. Study docs for juniors / interviews (with diagrams)
+
+### Issue
+
+Need per-microservice learning material (architecture, service links, K8s YAML,
+Helm/Argo, interview Q&A) so the project can be studied for interviews.
+
+### How it was delivered
+
+| Path | What it covers |
+|------|----------------|
+| [microservices/README.md](./microservices/README.md) | Learning path + shop topology |
+| [microservices/_SERVICE_MAP.md](./microservices/_SERVICE_MAP.md) | Place-order & other Mermaid diagrams |
+| [microservices/_KUBERNETES_YAML_HELM_ARGOCD.md](./microservices/_KUBERNETES_YAML_HELM_ARGOCD.md) | YAML / Helm / Argo line-by-line |
+| [microservices/*.md](./microservices/) | One file per service (19 services) |
+| [INTERVIEW_QUESTIONS.md](./INTERVIEW_QUESTIONS.md) | 50+ Q&A (TF / EKS / Docker / GitOps) |
+| [GIT_ISSUES_EXPLAINED.md](./GIT_ISSUES_EXPLAINED.md) | Git divergence / rebase habits |
+
+**Status:** Done.
+
+---
+
+## End state (what “fixed” looks like)
+
+```text
+Developer / workflow_dispatch
+        │
+        ▼
+GitHub Actions
+  • product-catalog-ci  (Go + Docker)
+  • microservices-ci    (all other services; path filter OR build-all)
+        │
+        ├─► Docker Hub  (durganadimpalli/<service>:<run_id>)
+        │
+        └─► Commit image tag into kubernetes/<service>/deploy.yaml
+                │
+                ▼
+         Argo CD (otel-demo)
+           syncs kubernetes/* except complete-deploy.yaml
+                │
+                ▼
+              EKS
+```
+
+### Key files after all fixes
+
+| File | Purpose |
+|------|---------|
+| `.github/workflows/ci.yaml` | Product-catalog CI + manual run |
+| `.github/workflows/microservices-ci.yaml` | Other services + manual build-all |
+| `.github/workflows/reusable-service-ci.yaml` | Shared Docker + GitOps commit + `.env` build-args |
+| `src/currency/CMakeLists.txt` | CMake ≥ 3.26 for otel-cpp 1.23 |
+| `terraform/argocd.tf` | Argo syncs per-service manifests |
+| `argocd/application.yaml` | Same for manual Argo bootstrap |
+| GitHub secrets `DOCKER_USERNAME` / `DOCKER_TOKEN` | Registry auth |
+| `docs/microservices/` | Per-service + diagram study guides |
+| `docs/INTERVIEW_QUESTIONS.md` | Interview drill |
+
 ---
 
 ## Checklist if something breaks again
@@ -536,6 +609,7 @@ Affects `src/fraud-detection/Dockerfile` and `src/kafka/Dockerfile`.
 8. **Never** commit tokens or force-push `main`.
 9. **Currency build exit 128?** Pass / default `OPENTELEMETRY_CPP_VERSION` (see issue 16).
 10. **Java agent 404 (`.../download/v/...`)?** Pass / default `OTEL_JAVA_AGENT_VERSION` (see issue 17).
+11. **Currency CMake `IN_LIST` / CMP0057?** `cmake_minimum_required(VERSION 3.26)` (see issue 18).
 
 ---
 
@@ -544,8 +618,10 @@ Affects `src/fraud-detection/Dockerfile` and `src/kafka/Dockerfile`.
 From start to now, the work fixed a **broken GitOps loop** (CI writing a file
 Argo ignored), expanded CI to **all microservices**, then chased operational
 failures: **permissions**, **path filters**, **Docker Hub auth/scopes**,
-**Docker build context**, **manual build-all**, and **Git divergence** caused
-by CI committing back to `main`.
+**Docker build context**, **missing build-args**, **CMake / otel-cpp version
+mismatch**, **manual build-all**, and **Git divergence** caused by CI
+committing back to `main`. Study guides under `docs/microservices/` and
+`docs/INTERVIEW_QUESTIONS.md` document the architecture for interviews.
 
 The durable lesson: in this project, **Git is the deployment API**. CI, you,
 and Argo CD all meet on `main` — so secrets stay in GitHub Secrets, manifests
