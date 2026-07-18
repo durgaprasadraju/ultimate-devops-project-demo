@@ -31,7 +31,7 @@ spec:
       serviceAccountName: opentelemetry-demo
       containers:
         - name: frauddetectionservice
-          image: 'ghcr.io/open-telemetry/demo:1.12.0-frauddetectionservice'
+          image: durganadimpalli/fraud-detection:29634413645
           imagePullPolicy: IfNotPresent
           env:
             - name: OTEL_SERVICE_NAME
