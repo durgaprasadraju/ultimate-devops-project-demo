@@ -3,7 +3,8 @@
 > Chronological log of every problem encountered while bringing this fork from
 > broken CI/GitOps through Terraform EKS bootstrap to a running Astronomy Shop
 > on EKS — architecture, Git, Docker Hub, GitHub Actions, Terraform/Helm,
-> image builds, CrashLoopBackOff env mismatches, and public LoadBalancer access.
+> image builds, CrashLoopBackOff env mismatches, public LoadBalancer access,
+> OTel Collector, EC2 vs Fargate, and clean `terraform destroy`.
 >
 > Related: [GIT_ISSUES_EXPLAINED.md](./GIT_ISSUES_EXPLAINED.md) ·
 > [CI_CD_PIPELINE.md](./CI_CD_PIPELINE.md) ·
@@ -46,8 +47,13 @@
 | 26 | EKS runtime | Mass CrashLoopBackOff — wrong env var names in manifests | Fixed |
 | 27 | GitOps | Argo `selfHeal` reverted kubectl-only fixes | Push to Git required |
 | 28 | Ops | Accidental `kubectl apply` into `default` namespace | Clean up default |
-| 29 | Access | `frontendproxy` ClusterIP → LoadBalancer (`svc.yaml`) | Fixed (ELB URL) |
+| 29 | Access | `frontendproxy` ClusterIP → LoadBalancer (`svc.yaml`) | Fixed (NLB URL) |
 | 30 | Observability | Missing `otelcol` — OTLP export DNS errors | Fixed (`kubernetes/otelcol/`) |
+| 31 | Observability | Stale OTLP DNS errors after otelcol created | Fixed (restart / wait) |
+| 32 | Terraform | `terraform destroy` hung / VPC `DependencyViolation` (orphan ELB + SG) | Fixed (`cleanup.tf`) |
+| 33 | Terraform | Need EC2 **or** Fargate workers via tfvars | Fixed (`compute_type`) |
+| 34 | Access / Fargate | Classic ELB incompatible with Fargate-only | Fixed (AWS LB Controller + NLB IP) |
+| 35 | Ops | AWS `SignatureDoesNotMatch` on Terraform | Credentials (not code) |
 
 ---
 
@@ -690,8 +696,8 @@ kubectl -n otel-demo port-forward svc/opentelemetry-demo-frontendproxy 8080:8080
 # http://localhost:8080
 ```
 
-**Status:** Fixed (public ELB on `frontendproxy` only). Other Services remain
-ClusterIP by design.
+**Status:** Fixed (public NLB on `frontendproxy` only; IP target type via AWS LB
+Controller — see issue 34). Other Services remain ClusterIP by design.
 
 ---
 
@@ -732,8 +738,151 @@ logs show `Traces` / `Metrics` / `Logs` batches arriving.
 If a service still prints resolver errors right after create, restart that
 Deployment once (gRPC clients may cache failed DNS from before the Service existed).
 
-**Status:** Fixed. Push `kubernetes/otelcol/` to `main` so Argo keeps it.
+**Status:** Fixed. Manifests are under `kubernetes/otelcol/` and synced by Argo.
 Optional later: add Jaeger/Grafana and change exporters from `debug` to OTLP.
+
+---
+
+## 31. Stale OTLP resolver errors after otelcol came up
+
+### Issue
+
+After deploying `opentelemetry-demo-otelcol`, some pods (e.g. product-catalog,
+checkout) still showed:
+
+```text
+name resolver error: produced zero addresses
+```
+
+Collector logs already showed Traces/Metrics/Logs arriving. Product-catalog
+also looked “silent” in `kubectl logs` because handlers log to **spans**, not
+stdout (only startup lines are printed).
+
+### How it was fixed
+
+- Wait for DNS / gRPC clients to recover, **or** restart noisy Deployments once
+  (`kubectl rollout restart deploy/… -n otel-demo`).
+- Scanned all Deployments: errors stopped after the Service existed; no further
+  manifest change required.
+
+**Status:** Fixed (operational).
+
+---
+
+## 32. `terraform destroy` hung — orphan Classic ELB + `k8s-elb-*` SG
+
+### Issue
+
+`terraform destroy` stuck for minutes on public subnets / IGW, then failed:
+
+```text
+Error: deleting EC2 VPC (...): DependencyViolation:
+The vpc '...' has dependencies and cannot be deleted.
+```
+
+Root cause: `frontendproxy` `type: LoadBalancer` created a **Classic ELB** (and
+later ENIs / `k8s-elb-*` security group) **outside Terraform state**. Public
+subnets tried to delete while ELB ENIs still existed; after manual ELB delete,
+the leftover SG still blocked VPC delete.
+
+### How it was fixed
+
+| Piece | Role |
+|-------|------|
+| `terraform/cleanup.tf` | Destroy-time `null_resource`: **actively** deletes Classic/NLB ELBs in the VPC, waits for ELB ENIs, deletes `k8s-elb-*` SGs |
+| `terraform/eks.tf` `depends_on` | Destroy order: EKS → cleanup → VPC (so public subnets wait) |
+| Argo `resources-finalizer` | Still deletes the LoadBalancer Service when the Application is destroyed |
+
+One-time recovery used during the hung destroy:
+
+```bash
+aws elb delete-load-balancer --load-balancer-name <classic-elb-name>
+aws ec2 delete-security-group --group-id sg-...   # k8s-elb-*
+# then re-run terraform destroy (or state-rm VPC if already deleted in AWS)
+```
+
+**Status:** Fixed. Apply once so `wait_for_elb_cleanup` is in state; future
+destroys should clean ELBs/SGs automatically.
+
+---
+
+## 33. EC2 vs Fargate selectable via `compute_type`
+
+### Issue
+
+Needed one Terraform stack that can run workers as either managed EC2 nodes or
+EKS Fargate, without maintaining two separate root modules.
+
+### How it was fixed
+
+| File | Change |
+|------|--------|
+| `terraform/variables.tf` | `compute_type` = `"ec2"` \| `"fargate"` (validated) |
+| `terraform/terraform.tfvars` | `compute_type = "ec2"` or `"fargate"` |
+| `terraform/locals.tf` | Conditional `eks_managed_node_groups` **xor** `fargate_profiles`; CoreDNS `computeType=Fargate` when Fargate |
+| `terraform/eks.tf` | Passes those maps into the EKS module |
+
+Fargate profiles (when `compute_type = "fargate"`): `kube_system`, `argocd`,
+`app` (`otel-demo`). EC2 node sizing vars are ignored on Fargate.
+
+**Do not flip modes on a live cluster** — prefer destroy → edit tfvars → apply.
+
+List Fargate profiles (AWS API, not kubectl):
+
+```bash
+aws eks list-fargate-profiles --cluster-name otel-demo --region us-east-1
+kubectl get nodes -o wide   # fargate-ip-… nodes appear when pods schedule
+```
+
+**Status:** Fixed.
+
+---
+
+## 34. Classic ELB does not work on Fargate — AWS LB Controller + NLB IP
+
+### Issue
+
+In-tree Classic Load Balancers target **EC2 instances**. On a Fargate-only
+cluster there are no worker instances, so `type: LoadBalancer` without IP
+targets never works correctly.
+
+### How it was fixed
+
+| File | Change |
+|------|--------|
+| `terraform/aws_lb_controller.tf` | Install AWS Load Balancer Controller + IRSA (both compute modes) |
+| `kubernetes/frontendproxy/svc.yaml` | Annotations: `aws-load-balancer-type: external`, `nlb-target-type: ip`, `scheme: internet-facing` |
+
+Browser URL (port **8080**):
+
+```bash
+kubectl get svc -n otel-demo opentelemetry-demo-frontendproxy
+# http://<EXTERNAL-IP-or-hostname>:8080
+```
+
+**Status:** Fixed.
+
+---
+
+## 35. Terraform / AWS `SignatureDoesNotMatch`
+
+### Issue
+
+```text
+api error SignatureDoesNotMatch: The request signature we calculated does not
+match the signature you provided. Check your AWS Secret Access Key ...
+```
+
+### Cause / fix
+
+Bad or mismatched AWS credentials (typo, wrong secret, mixed key pair, missing
+session token). **Not** a `providers.tf` bug.
+
+```bash
+aws sts get-caller-identity   # must succeed before terraform apply/destroy
+```
+
+**Status:** Operational / credentials — not a repo code fix.
 
 ---
 
@@ -757,10 +906,10 @@ GitHub Actions
                 │
                 ▼
               EKS namespace otel-demo
-                • Shop Deployments Running
-                • frontendproxy Service type LoadBalancer
+                • Shop Deployments Running (EC2 nodes or Fargate)
+                • frontendproxy Service type LoadBalancer (NLB IP targets)
                 • otelcol Receiving OTLP (debug exporter)
-                • Public URL: http://<elb-dns>:8080
+                • Public URL: http://<nlb-dns>:8080
 ```
 
 ### What Terraform did (once)
@@ -768,7 +917,9 @@ GitHub Actions
 | Resource | Role |
 |----------|------|
 | VPC + NAT | Network for EKS |
-| EKS + node group | Cluster |
+| EKS + **EC2 node group or Fargate profiles** (`compute_type`) | Cluster compute |
+| `null_resource.wait_for_elb_cleanup` | Destroy-time ELB/SG cleanup |
+| `helm_release.aws_lb_controller` | NLB with IP targets (Fargate-safe) |
 | `helm_release.argocd` | Install Argo CD (chart `7.6.12`) |
 | `helm_release.argocd_apps` | Bootstrap Application `otel-demo` |
 
@@ -780,8 +931,11 @@ GitHub Actions
 |------|---------|
 | `.github/workflows/*.yaml` | CI + GitOps image tag commits |
 | `terraform/argocd.tf` | Exact Helm versions; Argo app source |
+| `terraform/locals.tf` / `eks.tf` | `compute_type` → EC2 xor Fargate |
+| `terraform/cleanup.tf` | Force-delete orphan ELBs/SGs on destroy |
+| `terraform/aws_lb_controller.tf` | AWS Load Balancer Controller + IRSA |
 | `kubernetes/*/deploy.yaml` | Env names matching app code |
-| `kubernetes/frontendproxy/svc.yaml` | **LoadBalancer** (public ELB); other `*/svc.yaml` stay ClusterIP |
+| `kubernetes/frontendproxy/svc.yaml` | **LoadBalancer** + NLB IP annotations |
 | `kubernetes/otelcol/` | OTLP collector (ConfigMap + Deployment + Service) |
 | `src/currency/src/server.cpp` | New otel-cpp semconv API |
 | `src/recommendation/requirements.txt` | `setuptools>=69,<82` |
@@ -791,9 +945,12 @@ GitHub Actions
 ### Useful verification commands
 
 ```bash
-kubectl get pods -n otel-demo
+kubectl get pods -n otel-demo -o wide
+kubectl get nodes -o wide
 kubectl get applications -n argocd
 kubectl get svc opentelemetry-demo-frontendproxy -n otel-demo
+aws eks list-fargate-profiles --cluster-name otel-demo --region us-east-1   # if Fargate
+kubectl logs -n otel-demo deploy/opentelemetry-demo-otelcol --tail=30
 kubectl logs -n otel-demo deploy/opentelemetry-demo-checkoutservice --tail=50
 ```
 
@@ -809,7 +966,7 @@ kubectl logs -n otel-demo deploy/opentelemetry-demo-checkoutservice --tail=50
 6. **Push rejected?** `git pull --rebase origin main && git push`.
 7. **Cluster not updating?** Argo syncs `kubernetes/*` excluding `complete-deploy.yaml`;
    confirm Application Synced/Healthy; selfHeal means **Git wins**.
-8. **Never** commit tokens or force-push `main`.
+8. **Never** commit tokens, `*.tfstate`, or force-push `main`.
 9. **Currency git exit 128?** `OPENTELEMETRY_CPP_VERSION` (issue 16).
 10. **Java agent 404?** `OTEL_JAVA_AGENT_VERSION` (issue 17).
 11. **Currency CMake IN_LIST?** CMake ≥ 3.26 (issue 18).
@@ -817,12 +974,17 @@ kubectl logs -n otel-demo deploy/opentelemetry-demo-checkoutservice --tail=50
 13. **Helm `~> x.y` plan error?** Pin exact chart version for Helm provider v3 (issue 21).
 14. **CrashLoop + “PORT not set”?** Manifest env names must match app (`*_PORT` / `*_ADDR`) (issue 26).
 15. **kubectl fix disappeared?** Push the same change to Git (issue 27).
-16. **No public URL?** Confirm `kubernetes/frontendproxy/svc.yaml` is
-    `type: LoadBalancer` (not ClusterIP); wait for `EXTERNAL-IP` / hostname
-    (issue 29). Other services should remain ClusterIP.
-17. **OTLP DNS / export errors?** Ensure `kubernetes/otelcol/` is applied and
-    Service `opentelemetry-demo-otelcol` exists; restart noisy Deployments once
-    (issue 30).
+16. **No public URL?** Confirm `frontendproxy` is LoadBalancer + NLB annotations;
+    wait for `EXTERNAL-IP`; open `http://…:8080` (issues 29, 34).
+17. **OTLP DNS / export errors?** Ensure `kubernetes/otelcol/` exists; restart
+    Deployments once if needed (issues 30–31).
+18. **Destroy hung on subnet/VPC?** Orphan ELB/SG — `cleanup.tf` should delete them;
+    otherwise delete Classic/NLB + `k8s-elb-*` SG manually (issue 32).
+19. **Empty Fargate profiles / only EC2 nodes?** Check `compute_type` in tfvars and
+    that the last apply used it; `kubectl get fargateprofile` is invalid — use AWS CLI
+    (issue 33).
+20. **`SignatureDoesNotMatch`?** Fix AWS keys / session token; `aws sts get-caller-identity`
+    (issue 35).
 
 ---
 
@@ -833,10 +995,11 @@ Work progressed in layers:
 1. **GitOps correctness** — CI must edit the manifests Argo watches; one Argo app for the shop.
 2. **CI reliability** — secrets, permissions, build contexts, build-args from `.env`.
 3. **Image build compatibility** — otel-cpp versions, CMake, setuptools, semconv API, Go lint.
-4. **Terraform bootstrap** — exact Helm chart pins; EKS + Argo once.
+4. **Terraform bootstrap** — exact Helm chart pins; EKS + Argo once; later EC2/Fargate switch.
 5. **Runtime on EKS** — rename Helm-era env vars to compose-era names; push to Git so selfHeal helps instead of hurts.
-6. **Access** — only `frontendproxy` Service changed ClusterIP → LoadBalancer
-   for a public ELB URL; internal services stay ClusterIP.
+6. **Access** — `frontendproxy` LoadBalancer with AWS LB Controller NLB (IP targets) for EC2 and Fargate.
+7. **Observability** — minimal `otelcol` under GitOps so OTLP exports succeed.
+8. **Destroy hygiene** — actively remove orphan ELBs and `k8s-elb-*` SGs before VPC teardown.
 
 **Durable lesson:** in this project, **Git is the deployment API**. CI, Terraform
 (bootstrap), kubectl (debug), and Argo CD all meet on `main`. Prefer fixing
